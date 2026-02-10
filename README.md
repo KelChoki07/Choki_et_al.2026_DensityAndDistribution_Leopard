@@ -1,1 +1,1 @@
-# Choki_et_al_2026_DensityAndDistribution_Leopard
+# Choki_et_al.2026_DensityAndDistribution_Leopard
