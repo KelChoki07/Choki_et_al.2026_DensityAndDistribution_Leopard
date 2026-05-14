@@ -22,6 +22,7 @@ treecover <- raster("treecover5km.tif")
 housden <- raster("housden5km.tif")
 strmden   <- raster("strmden5km.tif")
 tigerden  <- raster("tigerden5km.tif")
+preycount <-raster("prey_count5km.tif")
 terrain <- raster("TRI5km.tif")
 
 #check the crs
@@ -46,9 +47,29 @@ values(strmden)
 values(tigerden)
 values(terrain)
 
+#Multi-collinearity check
+library(raster)
+
+# Stack your layers (ensure they have the same resolution and extent)
+#add prey rast here
+raster_stack <- stack(elevation, treecover, strmden, housden, tigerden, preycount, terrain)
+# Rename the layers in your raster stack
+names(raster_stack) <- c("Elevation", "TreeCover", "StreamDensity", "HousingDensity", "TigerDensity", "preycount","TerrainIndex")
+
+# Extract values from raster stack, remove rows with NA values
+raster_values <- values(raster_stack)
+raster_values <- na.omit(raster_values)
+head(raster_values)
+
+# Calculate correlation matrix
+cor_matrix <- cor(raster_values)
+cor_matrix
+
+
+
+#For Density Analysis
 # Standardise the raster
 elevation1 <- scale(elevation, center = TRUE, scale = TRUE)
-# sum(is.na(values(elevation1))) #23082
 
 # Convert to polygon, secr again complains about rasters
 elevation_poly <- as(elevation1, "SpatialGridDataFrame")
@@ -59,7 +80,6 @@ names(elevation_poly) <- "elevation"
 
 
 treecover1 <- scale(treecover, center = TRUE, scale = TRUE)
-# sum(is.na(values(treecover1))) #22541
 
 # Convert to polygon, secr again complains about rasters
 treecover_poly <- as(treecover1 , "SpatialGridDataFrame")
@@ -69,7 +89,6 @@ plot(hab_mask,add=T)
 names(treecover_poly) <- "treecover"
 
 housden1 <- scale(housden, center = TRUE, scale = TRUE)
-# sum(is.na(values(treecover1))) #22541
 
 # Convert to polygon, secr again complains about rasters
 housden_poly <- as(housden1 , "SpatialGridDataFrame")
@@ -236,6 +255,7 @@ hab_mask <- make.mask(
   keep.poly = TRUE
 )
 str(hab_mask)
+
 elevation <- raster("elevation5km.tif")
 strmden <- raster("treecover5km.tif")
 housden <- raster("housden5km.tif")
@@ -332,75 +352,125 @@ colnames(aic_table) <- c( "Model",
                           "?? AICc", "AICWt", "logLik")
 
 
-library(kableExtra)
-
-aic_table %>%
-  kbl(caption = "_______ Table 2. Summary of the density model selection by AIC for the 10 competing models based on different
-covariate combinations on the density _______(D=individuals/100 km2), null detection probability (g0) and the scale parameter (sigma) using half
-normal (HN) detection function") %>%
-  kable_classic(full_width =T , html_font = "Cambria") %>%
-  footnote(general = "______ K is the number of parameters in the model.
-______ AIC is the Akaike information criterion.
-______ ?? AIC is the difference in the AIC between given model and the top model.
-______ AICWt is the AICc weights, or the probability that of the models tested the given model fits the data best.")
-
+aic_table
 
 summary(density_fit2$fit10)
 summary(density_fit2$fit8)
 summary(density_fit2$fit9)
 
-#Model Average Density Estimate
-fxsurface8 <- fx.total(density_fit2$fit8, mask = hab_mask,ncores=25)
-class(fxsurface8)
-plot(fxsurface8, covariate = "D.sum", poly = FALSE) #here it shows
+#################################################
+# Predict density surfaces from top models
+#################################################
 
-model2.rast<-rast(fxsurface8,values=attr(fxsurface8,"covariates")$D.sum)
+dsurf8 <- predictDsurface(density_fit2$fit8,
+                          mask = hab_mask)
 
-fxsurface9 <- fx.total(density_fit2$fit9, mask = hab_mask,ncores=25)
-class(fxsurface9)
-plot(fxsurface9, covariate = "D.sum", poly = FALSE) #here it shows
-model3.rast<-rast(fxsurface9,values=attr(fxsurface9,"covariates")$D.sum)
+dsurf9 <- predictDsurface(density_fit2$fit9,
+                          mask = hab_mask)
 
+dsurf10 <- predictDsurface(density_fit2$fit10,
+                           mask = hab_mask)
 
-fxsurface10 <- fx.total(density_fit2$fit10, mask = hab_mask,ncores=25)
-class(fxsurface10)
-plot(fxsurface10, covariate = "D.sum", poly = FALSE) #here it shows
-model1.rast<-rast(fxsurface10,values=attr(fxsurface10,"covariates")$D.sum)
-plot(model1.rast)
+#################################################
+# Convert D surfaces to rasters
+#################################################
 
-plot(model1.rast)
+model8.rast <- rast(
+  dsurf8,
+  values = covariates(dsurf8)$D.0
+)
 
-aic.out<-AIC(density_fit2, criterion = 'AICc') #model 10, 8,9 #criterion = "AIC"
-names(aic.out)
-mod.avg.ras<-model1.rast
-values(mod.avg.ras)<-(values(model1.rast)*aic.out$AICcwt[1])+
-  (values(model2.rast)*aic.out$AICcwt[2])+
-  (values(model3.rast)*aic.out$AICcwt[3])
+model9.rast <- rast(
+  dsurf9,
+  values = covariates(dsurf9)$D.0
+)
 
-plot(mod.avg.ras)
+model10.rast <- rast(
+  dsurf10,
+  values = covariates(dsurf10)$D.0
+)
 
-dsurf_rast <- raster(fxsurface10, covariate = "D.sum")
-class(dsurf_rast)
-plot(dsurf_rast)
+#################################################
+# Model averaging using AIC weights
+#################################################
 
+aic.out <- AIC(density_fit2, criterion = "AICc")
 
+# check model order carefully
+aic.out
+
+w8  <- aic.out$AICcwt[rownames(aic.out) == "fit8"]
+w9  <- aic.out$AICcwt[rownames(aic.out) == "fit9"]
+w10 <- aic.out$AICcwt[rownames(aic.out) == "fit10"]
+
+# model averaged density raster
+mod.avg.ras <- (model8.rast * w8) +
+  (model9.rast * w9) +
+  (model10.rast * w10)
+
+#################################################
+# Plot model averaged density
+#################################################
+# If your mask spacing is 5 km, then each mask cell is:
+#   
+# 5 km×5 km=25 km sq
+# 
+# which equals:
+# 25 km sq=2500 ha
+# 
+# Since secr density is in animals per hectare by default, to convert predicted density to:
+#   
+# animals per 25 km² → multiply by 2500
+# animals per 100 km² → multiply by 10000
+library(viridis)
 plot(
-  mod.avg.ras * 5E3, # spacing in 1km, convert density to per 100 km2
+  mod.avg.ras * 10000,
   axes = FALSE,
   box = FALSE,
-  col = rev(terrain.colors(200)),
+  col = viridis(200),
   horizontal = TRUE,
   legend.args = list(
-    text = as.expression(bquote(paste("Leopard AC density (100 km"^{-2}, ")")))
+    text = as.expression(
+      bquote(
+        paste("Leopard density (100 km"^{-2}, ")")
+      )
+    )
   )
 )
+
+plot(spc_mask_sf, add = TRUE)
+
+
+png("leopard_density.png", width = 2000, height = 1600, res = 300)
+
+par(mar = c(2,2,2,6))
+
+spc_mask_sf <- st_as_sf(spc_mask)
+plot(
+  mod.avg.ras * 10000,
+  axes = FALSE,
+  box = FALSE,
+  col = viridis(200),
+  horizontal = TRUE,
+  legend.args = list(
+    text = as.expression(
+      bquote(
+        paste("Leopard density (100 km"^{-2}, ")")
+      )
+    )
+  )
+)
+
+plot(spc_mask_sf, add = TRUE)
+
+dev.off()
+
+terra::plot(mod.avg.ras)
 
 plot(spc_mask_sf, add=T)
 
 # Save the raster
-writeRaster(dsurf_rast * 5E3, 
-            "Leopard_density_5km_modelaverageprediction.tif", 
-            overwrite = TRUE)
+
 
 
 leop <- raster("Leopard_density_5km_modelaverageprediction.tif")
